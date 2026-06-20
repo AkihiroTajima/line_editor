@@ -374,6 +374,7 @@
     <input type="file" id="importFile" accept=".txt,text/plain">
   </label>
   <button id="exportBtn">エクスポート</button>
+  <button id="exportAllBtn" title="全章を1ファイルに連結して出力">全章エクスポート</button>
   <button id="addBtn" class="primary">+ 行を追加</button>
   <button id="clearBtn">全消去</button>
   <div class="spacer"></div>
@@ -401,7 +402,10 @@
 </div>
 
 <footer>
-  <span>1行あたり <b>180</b> 文字まで</span>
+  <span>1行あたり
+    <input type="number" id="maxInput" min="1" max="100000" value="180"
+      style="width:64px; font:inherit; padding:2px 4px; border:1px solid var(--border); border-radius:4px; background:var(--card-bg); color:var(--text);">
+    文字まで</span>
   <span>ハンドルをドラッグで並べ替え</span>
   <span id="overStat"></span>
 </footer>
@@ -477,7 +481,7 @@ themeBtn.addEventListener('click', () => {
 });
 initTheme();
 
-const MAX = 180;
+let MAX = 180;
 const listEl = document.getElementById('list');
 const statEl = document.getElementById('stat');
 const overStatEl = document.getElementById('overStat');
@@ -586,7 +590,8 @@ let vaultSalt = null;
 function chaptersToPayload() {
   return {
     chapters: chapters.map(c => ({ name: c.name, lines: c.lines.map(l => l.text) })),
-    currentIndex: chapters.findIndex(c => c.id === currentId)
+    currentIndex: chapters.findIndex(c => c.id === currentId),
+    maxChars: MAX
   };
 }
 function payloadToChapters(data) {
@@ -595,6 +600,8 @@ function payloadToChapters(data) {
   );
   const idx = data.currentIndex >= 0 && data.currentIndex < chapters.length ? data.currentIndex : 0;
   currentId = chapters[idx].id;
+  // 保存されている最大文字数を復元（無ければ既定180）
+  setMax(data.maxChars || 180, false);
 }
 
 async function save() {
@@ -1143,18 +1150,44 @@ document.getElementById('importFile').addEventListener('change', (e) => {
   e.target.value = '';
 });
 
-document.getElementById('exportBtn').addEventListener('click', () => {
-  const text = lines.map(l => l.text).join('\n');
+function safeFileName(name, fallback) {
+  return (name || fallback).replace(/[\\/:*?"<>|]/g, '_').trim() || fallback;
+}
+function downloadText(text, filename) {
   const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  // 章名をファイル名に（使用できない文字は除去）
-  const safe = (curChapter().name || 'lines').replace(/[\\/:*?"<>|]/g, '_').trim() || 'lines';
-  a.download = safe + '.txt';
+  a.download = filename;
   a.href = url;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// 現在の章のみエクスポート
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const text = lines.map(l => l.text).join('\n');
+  downloadText(text, safeFileName(curChapter().name, 'lines') + '.txt');
 });
+
+// 全章を連結してエクスポート（各章を Markdown 見出し「# 章名」＋空行で区切る）
+document.getElementById('exportAllBtn').addEventListener('click', () => {
+  const text = chapters
+    .map(c => '# ' + c.name + '\n\n' + c.lines.map(l => l.text).join('\n'))
+    .join('\n\n');
+  downloadText(text, 'all_chapters.md');
+});
+
+// ---- 最大文字数の変更 ----
+const maxInput = document.getElementById('maxInput');
+function setMax(v, persist) {
+  v = parseInt(v, 10);
+  if (!v || v < 1) v = 1;
+  if (v > 100000) v = 100000;
+  MAX = v;
+  if (maxInput) maxInput.value = v;
+  if (persist) { render(); save(); } // ユーザー操作時のみ再描画・保存
+}
+maxInput.addEventListener('change', () => setMax(maxInput.value, true));
 
 document.getElementById('addBtn').addEventListener('click', addLine);
 document.getElementById('addBtn2').addEventListener('click', addLine);
