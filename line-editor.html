@@ -378,6 +378,7 @@
   <button id="clearBtn">全消去</button>
   <div class="spacer"></div>
   <span class="stat" id="stat"></span>
+  <button id="syncBtn" title="クラウド同期設定">☁</button>
   <button id="lockBtn" title="ロックする">🔒</button>
   <button id="themeBtn" title="ダークモード切替">🌙</button>
 </header>
@@ -427,6 +428,26 @@
       パスフレーズを忘れた場合は
       <button type="button" id="resetBtn" class="link-btn">初期化（全データ削除）</button>
     </div>
+  </div>
+</div>
+
+<!-- クラウド同期設定 -->
+<div class="lock-overlay" id="syncOverlay" hidden>
+  <div class="lock-card">
+    <h2>クラウド同期設定</h2>
+    <p class="lock-sub">
+      Pages に登録したトークンを入力すると、暗号文をサーバーに同期します。<br>
+      空のまま保存すると同期OFF（このデバイスのみ保存）になります。
+    </p>
+    <input type="password" id="syncTokenInput" placeholder="同期トークン（API_TOKEN）" autocomplete="off">
+    <button type="button" class="unlock-btn" id="syncSaveBtn">保存</button>
+    <p class="lock-error" id="syncMsg"></p>
+    <div class="lock-reset">
+      <button type="button" id="syncCloseBtn" class="link-btn">閉じる</button>
+    </div>
+    <p class="lock-note">
+      サーバーへ送られるのは暗号文のみ。トークンはこのデバイスにだけ保存されます。
+    </p>
   </div>
 </div>
 
@@ -487,8 +508,41 @@ function setLines(arr) {
 // ストレージ抽象レイヤ（第2段階でクラウドAPIへ差し替え可能）
 const VAULT_KEY = 'lineEditorVault';
 const LEGACY_KEY = 'lineEditorChapters';
-function storageGetRaw() { try { return localStorage.getItem(VAULT_KEY); } catch (e) { return null; } }
-function storageSetRaw(s) { try { localStorage.setItem(VAULT_KEY, s); } catch (e) {} }
+// クラウド同期（任意）: トークンがあればPages Function経由、無ければローカルのみ
+const SYNC_URL = '/api/state';
+const SYNC_TOKEN_KEY = 'lineEditorApiToken';
+function getToken() { try { return localStorage.getItem(SYNC_TOKEN_KEY); } catch (e) { return null; } }
+function syncEnabled() { return !!getToken(); }
+function localGet() { try { return localStorage.getItem(VAULT_KEY); } catch (e) { return null; } }
+function localSet(s) { try { localStorage.setItem(VAULT_KEY, s); } catch (e) {} }
+
+async function storageGetRaw() {
+  const local = localGet();
+  if (syncEnabled()) {
+    try {
+      const r = await fetch(SYNC_URL, { headers: { 'Authorization': 'Bearer ' + getToken() } });
+      if (r.ok) {
+        const t = await r.text();
+        if (t) return t;          // リモートにデータあり → 優先
+        return local || null;     // リモート空 → ローカルがあれば移行用に返す
+      }
+    } catch (e) { /* 通信失敗 → ローカルへフォールバック */ }
+    return local || null;
+  }
+  return local || null;
+}
+async function storageSetRaw(s) {
+  localSet(s); // 常にローカルにもキャッシュ（オフライン/フォールバック用）
+  if (syncEnabled()) {
+    try {
+      await fetch(SYNC_URL, {
+        method: 'PUT',
+        headers: { 'Authorization': 'Bearer ' + getToken(), 'content-type': 'application/json' },
+        body: s
+      });
+    } catch (e) { /* 通信失敗時はローカルキャッシュのみ。次回保存時に再送される */ }
+  }
+}
 
 // パスフレーズのキャッシュ（このデバイスでの自動解除用・任意）
 const PASS_CACHE_KEY = 'lineEditorPassCache';
@@ -543,7 +597,7 @@ async function save() {
   if (!cryptoKey || !vaultSalt) return;
   try {
     const blob = await encryptObj(cryptoKey, vaultSalt, chaptersToPayload());
-    storageSetRaw(blob);
+    await storageSetRaw(blob);
   } catch (e) { console.error('保存失敗', e); }
 }
 
@@ -624,7 +678,7 @@ lockForm.addEventListener('submit', async (e) => {
       hideLock();
       bootEditor();
     } else {
-      const raw = storageGetRaw();
+      const raw = await storageGetRaw();
       const blob = JSON.parse(raw);
       vaultSalt = _unb64(blob.salt);
       cryptoKey = await deriveKey(pass, vaultSalt);
@@ -655,8 +709,8 @@ function lockNow() {
   overStatEl.textContent = '';
   showLock('unlock');
 }
-document.getElementById('lockBtn').addEventListener('click', () => {
-  if (storageGetRaw()) lockNow();
+document.getElementById('lockBtn').addEventListener('click', async () => {
+  if (await storageGetRaw()) lockNow();
 });
 
 // パスフレーズ忘れ時の初期化（全データ削除）
@@ -675,7 +729,7 @@ document.getElementById('resetBtn').addEventListener('click', () => {
 
 // キャッシュされたパスフレーズで自動解除を試みる
 async function tryAutoUnlock() {
-  const raw = storageGetRaw();
+  const raw = await storageGetRaw();
   const cached = getCachedPass();
   if (!raw || !cached) return false;
   try {
@@ -695,8 +749,42 @@ async function tryAutoUnlock() {
   }
 }
 
+// ---- クラウド同期設定モーダル ----
+const syncOverlay = document.getElementById('syncOverlay');
+const syncTokenInput = document.getElementById('syncTokenInput');
+const syncMsg = document.getElementById('syncMsg');
+document.getElementById('syncBtn').addEventListener('click', () => {
+  syncTokenInput.value = getToken() || '';
+  syncMsg.textContent = '';
+  syncMsg.style.color = '';
+  syncOverlay.hidden = false;
+  setTimeout(() => syncTokenInput.focus(), 50);
+});
+document.getElementById('syncCloseBtn').addEventListener('click', () => { syncOverlay.hidden = true; });
+document.getElementById('syncSaveBtn').addEventListener('click', async () => {
+  const t = syncTokenInput.value.trim();
+  try {
+    if (t) localStorage.setItem(SYNC_TOKEN_KEY, t);
+    else localStorage.removeItem(SYNC_TOKEN_KEY);
+  } catch (e) {}
+  if (t && cryptoKey) {
+    // 解除済みなら現在のデータをサーバーへ反映
+    syncMsg.style.color = 'var(--muted)';
+    syncMsg.textContent = '同期中…';
+    await save();
+    syncMsg.style.color = 'var(--accent)';
+    syncMsg.textContent = '同期ONにしました。';
+  } else if (t) {
+    syncMsg.style.color = 'var(--accent)';
+    syncMsg.textContent = '同期ONにしました（次回解除時に反映）。';
+  } else {
+    syncMsg.style.color = 'var(--muted)';
+    syncMsg.textContent = '同期OFF（このデバイスのみ）にしました。';
+  }
+});
+
 async function init() {
-  if (storageGetRaw()) {
+  if (await storageGetRaw()) {
     if (await tryAutoUnlock()) return;
     showLock('unlock');
   } else {
