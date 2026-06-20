@@ -428,6 +428,10 @@
       パスフレーズを忘れた場合は
       <button type="button" id="resetBtn" class="link-btn">初期化（全データ削除）</button>
     </div>
+    <p style="margin:10px 0 0; font-size:12px; color:var(--muted); text-align:center;">
+      別の端末のデータを使うには
+      <button type="button" id="lockSyncBtn" class="link-btn">クラウド同期を設定</button>
+    </p>
   </div>
 </div>
 
@@ -753,13 +757,15 @@ async function tryAutoUnlock() {
 const syncOverlay = document.getElementById('syncOverlay');
 const syncTokenInput = document.getElementById('syncTokenInput');
 const syncMsg = document.getElementById('syncMsg');
-document.getElementById('syncBtn').addEventListener('click', () => {
+function openSync() {
   syncTokenInput.value = getToken() || '';
   syncMsg.textContent = '';
   syncMsg.style.color = '';
   syncOverlay.hidden = false;
   setTimeout(() => syncTokenInput.focus(), 50);
-});
+}
+document.getElementById('syncBtn').addEventListener('click', openSync);
+document.getElementById('lockSyncBtn').addEventListener('click', openSync);
 document.getElementById('syncCloseBtn').addEventListener('click', () => { syncOverlay.hidden = true; });
 document.getElementById('syncSaveBtn').addEventListener('click', async () => {
   const t = syncTokenInput.value.trim();
@@ -775,8 +781,11 @@ document.getElementById('syncSaveBtn').addEventListener('click', async () => {
     syncMsg.style.color = 'var(--accent)';
     syncMsg.textContent = '同期ONにしました。';
   } else if (t) {
-    syncMsg.style.color = 'var(--accent)';
-    syncMsg.textContent = '同期ONにしました（次回解除時に反映）。';
+    // ロック中（別端末の初回設定など）→ リモートを取得し直す
+    syncMsg.style.color = 'var(--muted)';
+    syncMsg.textContent = '取得中…';
+    syncOverlay.hidden = true;
+    await init();
   } else {
     syncMsg.style.color = 'var(--muted)';
     syncMsg.textContent = '同期OFF（このデバイスのみ）にしました。';
