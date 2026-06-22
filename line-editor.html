@@ -1031,6 +1031,7 @@ async function restoreBlob(blobStr) {
   const key = await deriveKey(sessionPass, salt); // セッションのパスフレーズで再導出
   const data = await decryptBlob(key, blobStr);   // 失敗＝パスフレーズ不一致
   payloadToChapters(data);
+  lines = curChapter().lines; // グローバル lines を新しい章へ張り直す（再描画反映に必須）
   renderChapters();
   render();
   await save(); // 現在の鍵で再保存して正規化
