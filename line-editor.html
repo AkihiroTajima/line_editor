@@ -75,6 +75,76 @@
   .filebtn input { display: none; }
   .spacer { flex: 1; }
   .stat { font-size: 12px; color: var(--muted); }
+  .sync-status {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 同期モード選択 */
+  .sync-modes {
+    display: flex;
+    gap: 8px;
+    margin: 4px 0 12px;
+  }
+  .sync-mode {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    transition: border-color .12s, background .12s;
+  }
+  .sync-mode small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+  .sync-mode input { margin-right: 6px; }
+  .sync-mode.active { border-color: var(--accent); background: var(--accent-soft); }
+
+  /* スナップショット一覧 */
+  .snap-list {
+    max-height: 320px;
+    overflow-y: auto;
+    margin: 6px 0 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .snap-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .snap-item:last-child { border-bottom: none; }
+  .snap-item .snap-when { flex: 1; min-width: 0; }
+  .snap-item .snap-when small { display: block; color: var(--muted); font-size: 11px; }
+  .snap-empty { padding: 24px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  /* トースト */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(10px);
+    background: var(--text);
+    color: var(--bg);
+    padding: 9px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    box-shadow: 0 6px 20px var(--shadow);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s, transform .18s;
+    z-index: 2000;
+  }
+  .toast.show { opacity: .95; transform: translateX(-50%) translateY(0); }
 
   .workspace {
     flex: 1;
@@ -379,6 +449,9 @@
   <button id="clearBtn">全消去</button>
   <div class="spacer"></div>
   <span class="stat" id="stat"></span>
+  <span class="sync-status" id="syncStatus" title="同期ステータス"></span>
+  <button id="uploadBtn" title="現在のデータをクラウドにアップロード（マニュアル）" hidden>⬆ アップロード</button>
+  <button id="loadBtn" title="クラウドからデータを読み込み" hidden>⬇ 読み込み</button>
   <button id="syncBtn" title="クラウド同期設定">☁</button>
   <button id="lockBtn" title="ロックする">🔒</button>
   <button id="themeBtn" title="ダークモード切替">🌙</button>
@@ -445,19 +518,51 @@
     <h2>クラウド同期設定</h2>
     <p class="lock-sub">
       Pages に登録したトークンを入力すると、暗号文をサーバーに同期します。<br>
+      トークンが一致しない場合はローカル専用モードで動作します。<br>
       空のまま保存すると同期OFF（このデバイスのみ保存）になります。
     </p>
     <input type="password" id="syncTokenInput" placeholder="同期トークン（API_TOKEN）" autocomplete="off">
+    <div class="sync-modes">
+      <label class="sync-mode" id="modeAutoLabel">
+        <span><input type="radio" name="syncMode" value="auto">オート</span>
+        <small>編集のたびに自動で上書き保存します。</small>
+      </label>
+      <label class="sync-mode" id="modeManualLabel">
+        <span><input type="radio" name="syncMode" value="manual">マニュアル</span>
+        <small>保存操作のたびにその時点のスナップショットを追加保存します。</small>
+      </label>
+    </div>
     <button type="button" class="unlock-btn" id="syncSaveBtn">保存</button>
     <p class="lock-error" id="syncMsg"></p>
     <div class="lock-reset">
       <button type="button" id="syncCloseBtn" class="link-btn">閉じる</button>
     </div>
     <p class="lock-note">
-      サーバーへ送られるのは暗号文のみ。トークンはこのデバイスにだけ保存されます。
+      サーバーへ送られるのは暗号文のみ。トークンはこのデバイスにだけ保存されます。<br>
+      オートとマニュアルのデータはサーバー上で別々に保存されます。
     </p>
   </div>
 </div>
+
+<!-- スナップショット読み込み（マニュアル） -->
+<div class="lock-overlay" id="snapOverlay" hidden>
+  <div class="lock-card">
+    <h2>クラウドから読み込み</h2>
+    <p class="lock-sub" id="snapSub">
+      アップロード済みのスナップショットを選んで読み込みます。<br>
+      読み込むと現在の編集内容は置き換わります。
+    </p>
+    <div class="snap-list" id="snapList"></div>
+    <p class="lock-error" id="snapMsg"></p>
+    <div class="lock-reset">
+      <button type="button" id="snapRefreshBtn" class="link-btn">再読み込み</button>
+      ／
+      <button type="button" id="snapCloseBtn" class="link-btn">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
 
 <script>
 // ---- テーマ（ダークモード） ----
@@ -519,36 +624,83 @@ const LEGACY_KEY = 'lineEditorChapters';
 // クラウド同期（任意）: トークンがあればPages Function経由、無ければローカルのみ
 const SYNC_URL = '/api/state';
 const SYNC_TOKEN_KEY = 'lineEditorApiToken';
+const SYNC_MODE_KEY = 'lineEditorSyncMode'; // 'auto' | 'manual'
 function getToken() { try { return localStorage.getItem(SYNC_TOKEN_KEY); } catch (e) { return null; } }
 function syncEnabled() { return !!getToken(); }
+function getSyncMode() { try { return localStorage.getItem(SYNC_MODE_KEY) || 'auto'; } catch (e) { return 'auto'; } }
+function setSyncMode(m) { try { localStorage.setItem(SYNC_MODE_KEY, m); } catch (e) {} }
+function authHeaders() { return { 'Authorization': 'Bearer ' + getToken() }; }
 function localGet() { try { return localStorage.getItem(VAULT_KEY); } catch (e) { return null; } }
 function localSet(s) { try { localStorage.setItem(VAULT_KEY, s); } catch (e) {} }
 
+// 同期状態: tokenValid（null=未確認, true=一致, false=不一致＝ローカル専用）
+let tokenValid = null;
+let syncOnline = true;
+let lastSync = null;
+
+// オートスロットの暗号文を取得（tokenValid / syncOnline を更新）
+async function fetchRemoteAuto() {
+  if (!syncEnabled()) return null;
+  try {
+    const r = await fetch(SYNC_URL + '?mode=auto', { headers: authHeaders() });
+    if (r.status === 401) { tokenValid = false; return null; }
+    tokenValid = true; syncOnline = true;
+    if (r.ok) { const t = await r.text(); return t || null; }
+    return null;
+  } catch (e) { syncOnline = false; return null; }
+}
+
+// マニュアルの最新スナップショット暗号文を取得（新規端末のブートストラップ用）
+async function fetchLatestSnapshot() {
+  if (!syncEnabled()) return null;
+  try {
+    const r = await fetch(SYNC_URL + '?mode=manual', { headers: authHeaders() });
+    if (r.status === 401) { tokenValid = false; return null; }
+    tokenValid = true; syncOnline = true;
+    if (!r.ok) return null;
+    const { snapshots } = await r.json();
+    if (!snapshots || !snapshots.length) return null;
+    const rr = await fetch(SYNC_URL + '?mode=manual&id=' + encodeURIComponent(snapshots[0].id), { headers: authHeaders() });
+    if (rr.status === 401) { tokenValid = false; return null; }
+    if (!rr.ok) return null;
+    return (await rr.text()) || null;
+  } catch (e) { syncOnline = false; return null; }
+}
+
+// 解除（復号）に使う暗号文を取得。
+// オート: リモートのオートスロットを優先 / マニュアル: ローカル優先・無ければ最新スナップショット
 async function storageGetRaw() {
   const local = localGet();
-  if (syncEnabled()) {
-    try {
-      const r = await fetch(SYNC_URL, { headers: { 'Authorization': 'Bearer ' + getToken() } });
-      if (r.ok) {
-        const t = await r.text();
-        if (t) return t;          // リモートにデータあり → 優先
-        return local || null;     // リモート空 → ローカルがあれば移行用に返す
-      }
-    } catch (e) { /* 通信失敗 → ローカルへフォールバック */ }
+  if (!syncEnabled()) return local || null;
+  if (getSyncMode() === 'auto') {
+    const remote = await fetchRemoteAuto();
+    if (remote) return remote;
     return local || null;
   }
-  return local || null;
+  // manual
+  if (local) return local;
+  const latest = await fetchLatestSnapshot();
+  return latest || null;
 }
+
+// 自動保存の送信先（オートのみ上書きアップロード。マニュアルはローカルのみ）
 async function storageSetRaw(s) {
   localSet(s); // 常にローカルにもキャッシュ（オフライン/フォールバック用）
-  if (syncEnabled()) {
+  if (syncEnabled() && getSyncMode() === 'auto') {
+    setSyncStatus('syncing');
     try {
-      await fetch(SYNC_URL, {
+      const r = await fetch(SYNC_URL + '?mode=auto', {
         method: 'PUT',
-        headers: { 'Authorization': 'Bearer ' + getToken(), 'content-type': 'application/json' },
+        headers: { ...authHeaders(), 'content-type': 'application/json' },
         body: s
       });
-    } catch (e) { /* 通信失敗時はローカルキャッシュのみ。次回保存時に再送される */ }
+      if (r.status === 401) { tokenValid = false; setSyncStatus(); return; }
+      tokenValid = true; syncOnline = true;
+      if (r.ok) { lastSync = Date.now(); setSyncStatus('synced'); }
+      else { setSyncStatus('offline'); }
+    } catch (e) { syncOnline = false; setSyncStatus('offline'); }
+  } else {
+    setSyncStatus();
   }
 }
 
@@ -586,6 +738,8 @@ async function decryptBlob(key, blobStr) {
 // 鍵はセッション中だけメモリに保持（保存しない）
 let cryptoKey = null;
 let vaultSalt = null;
+// パスフレーズもセッション中だけメモリに保持（別saltのスナップショット復号に使う・保存しない）
+let sessionPass = null;
 
 function chaptersToPayload() {
   return {
@@ -656,6 +810,10 @@ function bootEditor() {
   lines = curChapter().lines;
   renderChapters();
   render();
+  updateSyncControls();
+  // 同期ONなら初回にトークン妥当性を確認してステータスへ反映
+  if (syncEnabled() && tokenValid === null) validateToken();
+  else setSyncStatus();
 }
 
 lockForm.addEventListener('submit', async (e) => {
@@ -670,6 +828,7 @@ lockForm.addEventListener('submit', async (e) => {
       if (pass !== passConfirm.value) { lockError.textContent = '確認用と一致しません。'; return; }
       vaultSalt = crypto.getRandomValues(new Uint8Array(16));
       cryptoKey = await deriveKey(pass, vaultSalt);
+      sessionPass = pass;
       // 既存の平文データがあれば暗号化して移行、なければ新規
       let migrated = false;
       try {
@@ -693,6 +852,7 @@ lockForm.addEventListener('submit', async (e) => {
       const blob = JSON.parse(raw);
       vaultSalt = _unb64(blob.salt);
       cryptoKey = await deriveKey(pass, vaultSalt);
+      sessionPass = pass;
       const data = await decryptBlob(cryptoKey, raw); // 失敗＝パスフレーズ不一致
       payloadToChapters(data);
       if (rememberPass.checked) cachePass(pass); else clearCachedPass();
@@ -711,6 +871,8 @@ function lockNow() {
   clearCachedPass(); // 手動ロック時はキャッシュも破棄（自動再解除しない）
   cryptoKey = null;
   vaultSalt = null;
+  sessionPass = null;
+  tokenValid = null;
   chapters = [];
   currentId = null;
   lines = [];
@@ -747,6 +909,7 @@ async function tryAutoUnlock() {
     const blob = JSON.parse(raw);
     vaultSalt = _unb64(blob.salt);
     cryptoKey = await deriveKey(cached, vaultSalt);
+    sessionPass = cached;
     const data = await decryptBlob(cryptoKey, raw);
     payloadToChapters(data);
     hideLock();
@@ -760,12 +923,265 @@ async function tryAutoUnlock() {
   }
 }
 
+// ---- 同期ステータス表示 / コントロール ----
+function modeLabel(m) { return m === 'manual' ? 'マニュアル' : 'オート'; }
+function pad2(n) { return String(n).padStart(2, '0'); }
+function timeStr(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+function fullTimeStr(ts) {
+  if (!ts) return '(不明)';
+  const d = new Date(ts);
+  return d.getFullYear() + '/' + pad2(d.getMonth() + 1) + '/' + pad2(d.getDate()) +
+         ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+
+// kind: undefined(=idle) | 'syncing' | 'synced' | 'offline'
+function setSyncStatus(kind) {
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  const mode = getSyncMode();
+  let text, color = 'var(--muted)';
+  if (!syncEnabled()) {
+    text = '● ローカル専用';
+  } else if (tokenValid === false) {
+    text = '● トークン不一致：ローカル専用';
+    color = 'var(--danger)';
+  } else if (kind === 'syncing') {
+    text = '● 同期中…（' + modeLabel(mode) + '）';
+    color = 'var(--accent)';
+  } else if (kind === 'offline') {
+    text = '● オフライン：ローカル保存のみ';
+    color = 'var(--warn)';
+  } else if (kind === 'synced') {
+    text = '● 同期済み ' + timeStr(lastSync) + '（' + modeLabel(mode) + '）';
+    color = 'var(--accent)';
+  } else if (mode === 'manual') {
+    text = '● マニュアル同期（手動アップロード）';
+    color = 'var(--accent)';
+  } else {
+    text = '● オート同期' + (lastSync ? '：' + timeStr(lastSync) : '');
+    color = 'var(--accent)';
+  }
+  el.textContent = text;
+  el.style.color = color;
+  el.title = text;
+}
+
+function updateSyncControls() {
+  const upBtn = document.getElementById('uploadBtn');
+  const ldBtn = document.getElementById('loadBtn');
+  const on = syncEnabled();
+  const manual = getSyncMode() === 'manual';
+  if (upBtn) upBtn.hidden = !(on && manual);   // アップロードはマニュアル時のみ
+  if (ldBtn) ldBtn.hidden = !on;               // 読み込みは同期ON時に表示
+  setSyncStatus();
+}
+
+// トークンの妥当性を確認（GETで401かどうか）。tokenValid / syncOnline を更新。
+async function validateToken() {
+  if (!syncEnabled()) { setSyncStatus(); return; }
+  setSyncStatus('syncing');
+  try {
+    const r = await fetch(SYNC_URL + '?mode=auto', { headers: authHeaders() });
+    if (r.status === 401) { tokenValid = false; }
+    else { tokenValid = true; syncOnline = true; }
+  } catch (e) { syncOnline = false; setSyncStatus('offline'); return; }
+  setSyncStatus();
+}
+
+// ---- トースト ----
+let toastTimer = null;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// ---- マニュアル: スナップショットをアップロード ----
+async function uploadSnapshot() {
+  if (!cryptoKey || !vaultSalt) return;
+  if (!syncEnabled()) { toast('同期トークンが未設定です'); openSync(); return; }
+  setSyncStatus('syncing');
+  try {
+    const blob = await encryptObj(cryptoKey, vaultSalt, chaptersToPayload());
+    localSet(blob); // ローカルキャッシュも更新
+    const r = await fetch(SYNC_URL + '?mode=manual', {
+      method: 'PUT',
+      headers: { ...authHeaders(), 'content-type': 'application/json' },
+      body: blob
+    });
+    if (r.status === 401) { tokenValid = false; setSyncStatus(); toast('トークン不一致：ローカル専用モードです'); return; }
+    tokenValid = true; syncOnline = true;
+    if (r.ok) { lastSync = Date.now(); setSyncStatus('synced'); toast('スナップショットをアップロードしました'); }
+    else { setSyncStatus('offline'); toast('アップロードに失敗しました'); }
+  } catch (e) { syncOnline = false; setSyncStatus('offline'); toast('通信エラー：アップロードできません'); }
+}
+document.getElementById('uploadBtn').addEventListener('click', uploadSnapshot);
+
+// ---- 暗号文を復号して現在の編集に反映（別saltにも対応） ----
+async function restoreBlob(blobStr) {
+  const blob = JSON.parse(blobStr);
+  const salt = _unb64(blob.salt);
+  const key = await deriveKey(sessionPass, salt); // セッションのパスフレーズで再導出
+  const data = await decryptBlob(key, blobStr);   // 失敗＝パスフレーズ不一致
+  payloadToChapters(data);
+  renderChapters();
+  render();
+  await save(); // 現在の鍵で再保存して正規化
+}
+
+// ---- 読み込みボタン（オート: 直接復元 / マニュアル: 一覧モーダル） ----
+document.getElementById('loadBtn').addEventListener('click', async () => {
+  if (!syncEnabled()) { openSync(); return; }
+  if (getSyncMode() === 'manual') { openSnapshots(); return; }
+  // オート
+  setSyncStatus('syncing');
+  const remote = await fetchRemoteAuto();
+  if (tokenValid === false) { setSyncStatus(); toast('トークン不一致：読み込みできません'); return; }
+  if (!syncOnline) { setSyncStatus('offline'); toast('オフライン：読み込みできません'); return; }
+  if (!remote) { setSyncStatus(); toast('クラウドにオートセーブデータがありません'); return; }
+  if (!confirm('クラウドのオートセーブを読み込み、現在の編集内容を置き換えます。よろしいですか？')) { setSyncStatus(); return; }
+  try {
+    await restoreBlob(remote);
+    lastSync = Date.now();
+    setSyncStatus('synced');
+    toast('クラウドから読み込みました');
+  } catch (e) { setSyncStatus(); toast('復号に失敗しました（パスフレーズ不一致の可能性）'); }
+});
+
+// ---- スナップショット一覧モーダル ----
+const snapOverlay = document.getElementById('snapOverlay');
+const snapListEl = document.getElementById('snapList');
+const snapMsg = document.getElementById('snapMsg');
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+async function openSnapshots() {
+  if (!syncEnabled()) { openSync(); return; }
+  snapMsg.textContent = '';
+  snapMsg.style.color = '';
+  snapListEl.innerHTML = '<div class="snap-empty">読み込み中…</div>';
+  snapOverlay.hidden = false;
+  await loadSnapshotList();
+}
+async function loadSnapshotList() {
+  try {
+    const r = await fetch(SYNC_URL + '?mode=manual', { headers: authHeaders() });
+    if (r.status === 401) {
+      tokenValid = false; setSyncStatus();
+      snapListEl.innerHTML = '';
+      snapMsg.style.color = 'var(--danger)';
+      snapMsg.textContent = 'トークン不一致：ローカル専用モードです。';
+      return;
+    }
+    tokenValid = true; syncOnline = true; setSyncStatus();
+    if (!r.ok) { snapListEl.innerHTML = ''; snapMsg.textContent = '一覧の取得に失敗しました。'; return; }
+    const { snapshots } = await r.json();
+    renderSnapshots(snapshots || []);
+  } catch (e) {
+    syncOnline = false; setSyncStatus('offline');
+    snapListEl.innerHTML = '';
+    snapMsg.style.color = 'var(--warn)';
+    snapMsg.textContent = 'オフライン：一覧を取得できません。';
+  }
+}
+function renderSnapshots(snaps) {
+  snapListEl.innerHTML = '';
+  if (!snaps.length) {
+    snapListEl.innerHTML = '<div class="snap-empty">アップロード済みのデータはありません。</div>';
+    return;
+  }
+  snaps.forEach((s, i) => {
+    const item = document.createElement('div');
+    item.className = 'snap-item';
+    const when = document.createElement('div');
+    when.className = 'snap-when';
+    when.innerHTML = '<span>' + fullTimeStr(s.ts) + '</span><small>' +
+      (i === 0 ? '最新' : '#' + (i + 1)) +
+      (s.label ? ' ・ ' + escapeHtml(s.label) : '') + '</small>';
+    const loadB = document.createElement('button');
+    loadB.textContent = '読込';
+    loadB.className = 'primary';
+    loadB.addEventListener('click', () => restoreSnapshot(s.id));
+    const delB = document.createElement('button');
+    delB.textContent = '削除';
+    delB.addEventListener('click', () => deleteSnapshot(s.id));
+    item.append(when, loadB, delB);
+    snapListEl.appendChild(item);
+  });
+}
+async function restoreSnapshot(id) {
+  if (!confirm('このスナップショットを読み込み、現在の編集内容を置き換えます。よろしいですか？')) return;
+  snapMsg.style.color = 'var(--muted)';
+  snapMsg.textContent = '読み込み中…';
+  try {
+    const r = await fetch(SYNC_URL + '?mode=manual&id=' + encodeURIComponent(id), { headers: authHeaders() });
+    if (r.status === 401) {
+      tokenValid = false; setSyncStatus();
+      snapMsg.style.color = 'var(--danger)';
+      snapMsg.textContent = 'トークン不一致：読み込みできません。';
+      return;
+    }
+    if (!r.ok) { snapMsg.textContent = '取得に失敗しました。'; return; }
+    const blobStr = await r.text();
+    await restoreBlob(blobStr);
+    snapOverlay.hidden = true;
+    setSyncStatus();
+    toast('スナップショットを読み込みました');
+  } catch (e) {
+    snapMsg.style.color = 'var(--danger)';
+    snapMsg.textContent = '復号に失敗しました（パスフレーズ不一致の可能性）。';
+  }
+}
+async function deleteSnapshot(id) {
+  if (!confirm('このスナップショットを削除します。よろしいですか？')) return;
+  try {
+    const r = await fetch(SYNC_URL + '?mode=manual&id=' + encodeURIComponent(id), { method: 'DELETE', headers: authHeaders() });
+    if (r.status === 401) {
+      tokenValid = false; setSyncStatus();
+      snapMsg.style.color = 'var(--danger)';
+      snapMsg.textContent = 'トークン不一致：削除できません。';
+      return;
+    }
+    await loadSnapshotList();
+    toast('削除しました');
+  } catch (e) { snapMsg.textContent = '削除に失敗しました。'; }
+}
+document.getElementById('snapCloseBtn').addEventListener('click', () => { snapOverlay.hidden = true; });
+document.getElementById('snapRefreshBtn').addEventListener('click', loadSnapshotList);
+
 // ---- クラウド同期設定モーダル ----
 const syncOverlay = document.getElementById('syncOverlay');
 const syncTokenInput = document.getElementById('syncTokenInput');
 const syncMsg = document.getElementById('syncMsg');
+
+function reflectModeRadios() {
+  const mode = getSyncMode();
+  document.querySelectorAll('input[name="syncMode"]').forEach(r => {
+    r.checked = (r.value === mode);
+    const card = r.closest('.sync-mode');
+    if (card) card.classList.toggle('active', r.value === mode);
+  });
+}
+document.querySelectorAll('input[name="syncMode"]').forEach(r => {
+  r.addEventListener('change', () => {
+    document.querySelectorAll('.sync-mode').forEach(el => el.classList.remove('active'));
+    const card = r.closest('.sync-mode');
+    if (card) card.classList.add('active');
+  });
+});
+
 function openSync() {
   syncTokenInput.value = getToken() || '';
+  reflectModeRadios();
   syncMsg.textContent = '';
   syncMsg.style.color = '';
   syncOverlay.hidden = false;
@@ -774,28 +1190,59 @@ function openSync() {
 document.getElementById('syncBtn').addEventListener('click', openSync);
 document.getElementById('lockSyncBtn').addEventListener('click', openSync);
 document.getElementById('syncCloseBtn').addEventListener('click', () => { syncOverlay.hidden = true; });
+
 document.getElementById('syncSaveBtn').addEventListener('click', async () => {
   const t = syncTokenInput.value.trim();
+  const selected = document.querySelector('input[name="syncMode"]:checked');
+  const mode = selected ? selected.value : 'auto';
+  setSyncMode(mode);
   try {
     if (t) localStorage.setItem(SYNC_TOKEN_KEY, t);
     else localStorage.removeItem(SYNC_TOKEN_KEY);
   } catch (e) {}
-  if (t && cryptoKey) {
-    // 解除済みなら現在のデータをサーバーへ反映
+  tokenValid = null; // 再判定する
+
+  if (!t) {
+    updateSyncControls();
     syncMsg.style.color = 'var(--muted)';
-    syncMsg.textContent = '同期中…';
-    await save();
-    syncMsg.style.color = 'var(--accent)';
-    syncMsg.textContent = '同期ONにしました。';
-  } else if (t) {
+    syncMsg.textContent = '同期OFF（このデバイスのみ）にしました。';
+    return;
+  }
+
+  // トークン妥当性チェック（一致しなければローカル専用）
+  syncMsg.style.color = 'var(--muted)';
+  syncMsg.textContent = '確認中…';
+  await validateToken();
+  updateSyncControls();
+  if (tokenValid === false) {
+    syncMsg.style.color = 'var(--danger)';
+    syncMsg.textContent = 'トークンが一致しません。ローカル専用モードで動作します。';
+    return;
+  }
+  if (!syncOnline) {
+    syncMsg.style.color = 'var(--warn)';
+    syncMsg.textContent = 'サーバーに接続できません（オフライン）。設定は保存しました。';
+    return;
+  }
+
+  // 一致
+  if (cryptoKey) {
+    if (mode === 'auto') {
+      syncMsg.style.color = 'var(--muted)';
+      syncMsg.textContent = '同期中…';
+      await save(); // 現在データをオートスロットへ反映
+      syncMsg.style.color = 'var(--accent)';
+      syncMsg.textContent = 'オート同期ONにしました。';
+    } else {
+      syncMsg.style.color = 'var(--accent)';
+      syncMsg.textContent = 'マニュアル同期ONにしました。「⬆ アップロード」で保存できます。';
+    }
+  } else {
     // ロック中（別端末の初回設定など）→ リモートを取得し直す
     syncMsg.style.color = 'var(--muted)';
     syncMsg.textContent = '取得中…';
     syncOverlay.hidden = true;
     await init();
-  } else {
-    syncMsg.style.color = 'var(--muted)';
-    syncMsg.textContent = '同期OFF（このデバイスのみ）にしました。';
   }
 });
 
